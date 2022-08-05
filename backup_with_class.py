@@ -30,37 +30,46 @@ def show_command(ip, username, password, privilege_pass, model, tmp_cli, privile
     privilege_pass = str(privilege_pass)  # 空的密碼傳入會是float 先轉成str避免錯誤
     host = ParamikoConnector(ip, username, password)
     host.ssh()
+
+    time.sleep(3)  # wait for start process
+
     if(privilege_pass != 'nan'):  # 如果沒有給privilege密碼就不執行
         pri_tmp = privilege_method.pop()
         pri_tmp = pri_tmp.replace('*', privilege_pass)
         privilege_method.append(pri_tmp)
         for cmd in privilege_method:
             host.send_cmd(cmd)
+    host.send_cmd('')
     host.send_cmd('for_host')
     host.send_cmd('')
     host_tmp = host.receive()
     host.send_cmd('')
     for cmd in tmp_cli:
         host.send_cmd(cmd)
-        tmp = host.receive()
-        log += tmp
-        if re.search('invalid', tmp, re.I):err_cnt += 1
-        else: suc_cnt += 1
+        # tmp = host.receive()
+        # log += tmp
+        # if re.search('invalid', tmp, re.I):err_cnt += 1
+        # else: suc_cnt += 1
+    
+    time.sleep(3)  # wait for all commands
+
     host.close()
+    tmp = host.receive()
+    log += tmp
     log = log.replace('\r\n', '\n')
     hostname = re.search('(.*).for_host', host_tmp).group(1)
-    hostname = hostname.replace('\r\n', '')
-    hostname = hostname.replace(':', '')
+    # hostname = hostname.replace('\r\n', '')
+    hostname = re.sub('\\\|\/|:|\?|\*|\"|<|>|\|', '', hostname)
     host_chg = True
-    if("b'"+hostname+"'" != str(hostname.encode())) :  # 有些hostname回傳顯示比較異常 直接用型號代替hostname
-        host_chg = False
-        hostname = str(model)
-        print('hostname trouble at ' + hostname)
+    # if("b'"+hostname+"'" != str(hostname.encode())) :  # 有些hostname回傳顯示比較異常 直接用型號代替hostname
+    #     host_chg = False
+    #     hostname = str(model)
+    #     print('hostname trouble at ' + hostname)
     writter(hostname + '@' + ip + '_' + str(time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime())) + '.txt', log)
     print(str(time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())) + ' - Backup Process of ' + ip + ' has been done!!!')
     if host_chg:
         report = str(time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())) + ' - ' + ip + ' : Backup Success!!! - < Success Commands:' + str(suc_cnt) + ' >< Failed Commands:' + str(err_cnt) + ' >\n'
-    elif not host_chg:
+    elif not host_chg:  # never trigger
         report = str(time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())) + ' - ' + ip + ' : Backup Success , But Hostname NOT found!!! - < Success Commands:' + str(suc_cnt) + ' >< Failed Commands:' + str(err_cnt) + ' >\n'
     return report
 
