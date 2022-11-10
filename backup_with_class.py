@@ -6,71 +6,67 @@ import pandas as pd
 import time
 import re
 from numpy import NAN
+from os import makedirs
+# import encodings.idna  # 包成EXE會遇到這個問題 import 就能解決
 
 REPORT = ''  # 最後結果報告
 MY_THREAD = MyThreadTool(5)
 THREAD_NUMBER = 5  # 計算執行緒
+threading_cnt = THREAD_NUMBER
+# CISCO_ERR_MSG_LIST = ["% Invalid input detected at '^' marker.", "% Incomplete command.", ]
+CISCO_ERR_MSG_I = "% Invalid input detected at '^' marker."
+CISCO_ERR_MSG_II = "% Incomplete command."
+CISCO_ERR_MSG_III = "syntax error:"
+CISCO_ERR_MSG_IV = "% No entries found."
+
+# make file direction
+EXECUTE_DATE = time.strftime('%Y-%m-%d_%H-%M', time.localtime())
+DOC_PATH = './Backup_' + EXECUTE_DATE
+makedirs(DOC_PATH)
 
 def thread_limiter(function):
     def wrapper(*args, **kwargs):
-        global MY_THREAD, REPORT, THREAD_NUMBER
+        global MY_THREAD, REPORT, threading_cnt
         tmp = function(*args, **kwargs)
         MY_THREAD.end()
-        THREAD_NUMBER += 1
+        threading_cnt += 1
         REPORT += tmp
     return wrapper
 
 @thread_limiter
 @exception_handler
-def show_command(ip, username, password, privilege_pass, model, tmp_cli, privilege_method):
+def show_command(ip, username, password, privilege_pass, tmp_cli, privilege_method):
     log = ''
-    err_cnt = 0
-    suc_cnt = 0
     report = ''
-    privilege_pass = str(privilege_pass)  # 空的密碼傳入會是float 先轉成str避免錯誤
-    host = ParamikoConnector(ip, username, password)
+    err_lst = []
+    privilege_pass = str(privilege_pass)  # Empty password will be read as "float", trasfer the password into string to avoid the bug
+    host = ParamikoConnector(ip, username, password, privilege_pass, privilege_method)
     host.ssh()
+    device_name = host.get_device_name()
 
-    time.sleep(3)  # wait for start process
+    host.send_cmd('')
+    time.sleep(.2)
 
-    if(privilege_pass != 'nan'):  # 如果沒有給privilege密碼就不執行
-        pri_tmp = privilege_method.pop()
-        pri_tmp = pri_tmp.replace('*', privilege_pass)
-        privilege_method.append(pri_tmp)
-        for cmd in privilege_method:
-            host.send_cmd(cmd)
-    host.send_cmd('')
-    host.send_cmd('for_host')
-    host.send_cmd('')
-    host_tmp = host.receive()
-    host.send_cmd('')
     for cmd in tmp_cli:
         host.send_cmd(cmd)
-        # tmp = host.receive()
-        # log += tmp
-        # if re.search('invalid', tmp, re.I):err_cnt += 1
-        # else: suc_cnt += 1
-    
-    time.sleep(3)  # wait for all commands
+        tmp = host.receive()
+        if CISCO_ERR_MSG_I in tmp or CISCO_ERR_MSG_II in tmp or CISCO_ERR_MSG_III in tmp or CISCO_ERR_MSG_IV in tmp:
+            err_lst.append(cmd)
+        log += tmp
 
     host.close()
-    tmp = host.receive()
-    log += tmp
     log = log.replace('\r\n', '\n')
-    hostname = re.search('(.*).for_host', host_tmp).group(1)
-    # hostname = hostname.replace('\r\n', '')
-    hostname = re.sub('\\\|\/|:|\?|\*|\"|<|>|\|', '', hostname)
-    host_chg = True
-    # if("b'"+hostname+"'" != str(hostname.encode())) :  # 有些hostname回傳顯示比較異常 直接用型號代替hostname
-    #     host_chg = False
-    #     hostname = str(model)
-    #     print('hostname trouble at ' + hostname)
-    writter(hostname + '@' + ip + '_' + str(time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime())) + '.txt', log)
+
+    writter('./' + DOC_PATH + '/' + device_name + '@' + ip + '_' + str(time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime())) + '.txt', log)
     print(str(time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())) + ' - Backup Process of ' + ip + ' has been done!!!')
-    if host_chg:
-        report = str(time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())) + ' - ' + ip + ' : Backup Success!!! - < Success Commands:' + str(suc_cnt) + ' >< Failed Commands:' + str(err_cnt) + ' >\n'
-    elif not host_chg:  # never trigger
-        report = str(time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())) + ' - ' + ip + ' : Backup Success , But Hostname NOT found!!! - < Success Commands:' + str(suc_cnt) + ' >< Failed Commands:' + str(err_cnt) + ' >\n'
+
+    # making LOG information
+    report = str(time.strftime("%Y-%m-%d-%H:%M:%S", time.localtime())) + ' - ' + device_name + ' - ' + ip + ' : Backup Success!!!\n'
+    report += ' <Command Not Support as Below>\n'
+    if err_lst :
+        for cmd in err_lst:
+            report += '   - ' + cmd + '\n'
+    report += '\n'
     return report
 
 print('Starting Backup Process...')
@@ -119,12 +115,16 @@ for tmp in host_list.iloc:  # 一列一列看各個設備資料 準備輸入指�
 
     while NAN in tmp_cli:  # 去除空指令(DataFrame的NAN)
         tmp_cli.remove(NAN)
+    while NAN in privilege_method:  # 去除空指令(DataFrame的NAN)
+        privilege_method.remove(NAN)
     
-    MY_THREAD.run(show_command, ip, username, password, privilege_pass, model,tmp_cli, privilege_method)
-    THREAD_NUMBER -= 1
+    MY_THREAD.run(show_command, ip, username, password, privilege_pass, tmp_cli, privilege_method)
+    threading_cnt -= 1
 
 while True:
-    if(THREAD_NUMBER==5):  # 每0.5秒確認一次 確認5個執行緒都被釋放了才輸出REPORT
+    if(threading_cnt==THREAD_NUMBER):  # 每0.5秒確認一次 確認5個執行緒都被釋放了才輸出REPORT
         writter(str(time.strftime("%Y-%m-%d-%H_%M_%S", time.localtime())) + '-backup_report.log', REPORT)
         break
     else:time.sleep(.5)
+
+input("press <ENTER> to quit...")
